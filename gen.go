@@ -1,4 +1,4 @@
-package main
+package cfgen
 
 import (
 	"bufio"
@@ -12,6 +12,11 @@ import (
 	"gopkg.in/yaml.v2"
 
 	"strings"
+
+	"io/ioutil"
+
+	"bytes"
+	"encoding/csv"
 
 	"github.com/alistanis/size"
 )
@@ -47,51 +52,126 @@ func Create(i interface{}, indent int) (map[string]interface{}, error) {
 		f := v.Field(i)
 		n := v.Type().Field(i).Name
 
-		switch f.Kind() {
-		case reflect.Map, reflect.Slice, reflect.Array:
-			return nil, errors.New("Only primitive types are currently supported (embedded structs are supported)")
-		}
 		var t string
-		if f.Kind() != reflect.Struct {
-			fmt.Printf("%sPlease enter a value for %s (type: %s)\n%s", strings.Repeat(" ", indent), n, f.Kind().String(), strings.Repeat(" ", indent))
-			scanner.Scan()
-			t = scanner.Text()
-		} else {
-			fmt.Printf("%sEmbedded struct: %s (name: %s)\n", strings.Repeat(" ", indent), n, v.Type().Name())
-		}
 
 		switch f.Kind() {
-		case reflect.Int, reflect.Int8, reflect.Int16,
-			reflect.Int32, reflect.Int64:
-			i, err := strconv.Atoi(t)
-			if err != nil {
-				return nil, err
-			}
-			m[n] = i
-		case reflect.Bool:
-			b, err := strconv.ParseBool(t)
-			if err != nil {
-				return nil, err
-			}
-			m[n] = b
-		case reflect.String:
-			m[n] = t
-		case reflect.Float32, reflect.Float64:
-			f, err := strconv.ParseFloat(t, size.WordBits)
-			if err != nil {
-				return nil, err
-			}
-			m[n] = f
 		case reflect.Struct:
-			rm, err := Create(reflect.New(f.Type()).Interface(), indent+1)
-			if err != nil {
-				return nil, err
+			fmt.Printf("%sEmbedded struct: %s (name: %s)\n", strings.Repeat(" ", indent+1), n, v.Type().Name())
+		case reflect.Ptr:
+			fmt.Printf("%sEmbedded pointer: %s (name: %s)\n", strings.Repeat(" ", indent+1), n, v.Type().Name())
+		default:
+			fmt.Printf("%sPlease enter a value for %s (type: %s)", strings.Repeat(" ", indent), n, f.Kind().String())
+			if f.Kind() == reflect.Slice {
+				fmt.Print(" (enter your values as a comma separated list) ex: '1,2,3', 'I love configs!' - using double quotes will ignore commas inside them, like a csv.")
 			}
-			m[n] = rm
+
+			if f.Kind() == reflect.Map {
+				fmt.Printf("KeyType: %s, ValueType:%s, (enter your values as a comma separated list of key value pairs separated by a colon) ex: 'first_key:first_value,second_key:secondvalue'", f.Type().Key(), f.Type().Elem())
+			}
+
+			fmt.Printf("\n%s", strings.Repeat(" ", indent))
+			scanner.Scan()
+			t = scanner.Text()
+		}
+
+		i, err := ParseType(t, f.Type(), indent)
+		if err != nil {
+			return nil, err
+		}
+		if i != nil {
+			m[n] = i
 		}
 
 	}
 	return m, nil
+}
+
+// ParseType returns the actual type necessary for encoding to work successfully as an interface - recursively calls container types/structs
+func ParseType(t string, typ reflect.Type, indent int) (interface{}, error) {
+	switch typ.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16,
+		reflect.Int32, reflect.Int64:
+		return strconv.Atoi(t)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16,
+		reflect.Uint32, reflect.Uint64:
+		return UAtoi(t)
+	case reflect.Bool:
+		return strconv.ParseBool(t)
+	case reflect.String:
+		return t, nil
+	case reflect.Float32, reflect.Float64:
+		return strconv.ParseFloat(t, size.WordBits)
+	case reflect.Slice:
+		return ParseSlice(t, typ.Elem(), indent)
+	case reflect.Map:
+		return ParseMap(t, typ, indent)
+	case reflect.Struct:
+		return Create(reflect.New(typ).Interface(), indent+1)
+	case reflect.Ptr:
+		return Create(reflect.New(typ.Elem()).Interface(), indent+1)
+	case reflect.Interface:
+		return t, nil
+	// ignore these types for now
+	case reflect.Func, reflect.Uintptr, reflect.Chan:
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("cfgen: Unsupported type given to ParseType (%s)", typ.Kind())
+	}
+}
+
+func ParseSlice(t string, typ reflect.Type, indent int) (interface{}, error) {
+	r := bytes.NewReader([]byte(t))
+	csvR := csv.NewReader(r)
+	records, err := csvR.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+
+	i := make([]interface{}, 0)
+	for _, slc := range records {
+		for _, s := range slc {
+			t, err := ParseType(s, typ, indent)
+			if err != nil {
+				return nil, err
+			}
+			i = append(i, t)
+		}
+	}
+	return i, nil
+}
+
+func ParseMap(t string, typ reflect.Type, indent int) (interface{}, error) {
+	r := bytes.NewReader([]byte(t))
+	csvR := csv.NewReader(r)
+	records, err := csvR.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	m := reflect.MakeMap(typ)
+
+	ktyp := typ.Elem()
+	vtyp := typ.Key()
+	for _, slc := range records {
+		for _, s := range slc {
+			// TODO - fix this, this is bad
+			kvslc := strings.Split(s, ":")
+			if len(kvslc) != 2 {
+				return nil, fmt.Errorf("cfgen: Missing full k/v pair for map, got %d of 2 entries", len(kvslc))
+			}
+
+			k, err := ParseType(kvslc[0], ktyp, indent)
+			if err != nil {
+				return nil, err
+			}
+
+			t, err := ParseType(kvslc[1], vtyp, indent)
+			if err != nil {
+				return nil, err
+			}
+			m.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(t))
+		}
+	}
+	return m.Interface(), nil
 }
 
 func GenerateData(i interface{}, format string) ([]byte, error) {
@@ -108,21 +188,26 @@ func GenerateData(i interface{}, format string) ([]byte, error) {
 	return nil, ErrInvalidFormat
 }
 
-func main() {
-	data, err := GenerateData(&Example{}, Json)
+func GenerateAndSave(i interface{}, format, path string) error {
+	data, err := GenerateData(i, format)
 	if err != nil {
-		fmt.Println(err)
-		os.Exit(-1)
+		return err
 	}
-	fmt.Println(string(data))
+	return ioutil.WriteFile(path, data, 0644)
 }
 
 type Example struct {
 	Value1 string
 	Value2 bool
 	Value3 Embed
+	Value4 *Embed
 }
 
 type Embed struct {
 	String string
+}
+
+func UAtoi(s string) (uint, error) {
+	ui64, err := strconv.ParseUint(s, 10, 0)
+	return uint(ui64), err
 }
