@@ -75,17 +75,34 @@ func CreateMap(i interface{}, indent int) (map[string]interface{}, error) {
 	indent++
 	scanner := bufio.NewScanner(reader)
 	for i := 0; i < v.NumField(); i++ {
+		var t string
 		f := v.Field(i)
 		n := v.Type().Field(i).Name
-
-		var t string
 
 		switch f.Kind() {
 		case reflect.Struct:
 			fmt.Fprintf(writer, "%sEmbedded struct: %s (name: %s)\n", strings.Repeat(" ", indent+1), n, v.Type().Name())
 		case reflect.Ptr:
 			fmt.Fprintf(writer, "%sEmbedded pointer: %s (name: %s)\n", strings.Repeat(" ", indent+1), n, v.Type().Name())
-		default:
+		case reflect.Func, reflect.Uintptr, reflect.UnsafePointer, reflect.Chan:
+			continue
+		case reflect.Interface:
+			// if this isn't the empty interface we don't want to store data in it
+			if f.NumMethod() != 0 {
+				continue
+			}
+		}
+
+		if f.Kind() == reflect.Map || f.Kind() == reflect.Slice {
+			// if we don't have a valid value type, skip it
+			vtyp := reflect.New(f.Type().Elem())
+			// TODO - fix - this shouldn't be here, too tired when working on this
+			if !ValueTypeIsValid(vtyp, 0) {
+				continue
+			}
+		}
+
+		if f.Kind() != reflect.Struct && f.Kind() != reflect.Ptr {
 			fmt.Fprintf(writer, "%sPlease enter a value for %s (type: %s)", strings.Repeat(" ", indent), n, f.Kind().String())
 			if f.Kind() == reflect.Slice {
 				fmt.Fprintf(writer, "(%s) (enter your values as a comma separated list) ex: '1,2,3', 'I love configs!' - using double quotes will ignore commas inside them, like a csv. For slices of slices, use double quotes around each slice value: ex: \"1,2,3\",\"a,b,c\"", f.Type().Elem())
@@ -99,6 +116,7 @@ func CreateMap(i interface{}, indent int) (map[string]interface{}, error) {
 			scanner.Scan()
 			t = scanner.Text()
 		}
+
 
 		i, err := ParseType(t, f.Type(), indent)
 		if err != nil {
@@ -139,7 +157,7 @@ func ParseType(t string, typ reflect.Type, indent int) (interface{}, error) {
 	case reflect.Interface:
 		return t, nil
 	// ignore these types for now
-	case reflect.Func, reflect.Uintptr, reflect.Chan:
+	case reflect.Func, reflect.Uintptr, reflect.Chan, reflect.UnsafePointer:
 		return nil, nil
 	default:
 		return nil, fmt.Errorf("cfgen: Unsupported type given to ParseType (%s)", typ.Kind())
@@ -180,6 +198,7 @@ func ParseMap(t string, typ reflect.Type, indent int) (interface{}, error) {
 
 	ktyp := typ.Key()
 	vtyp := typ.Elem()
+
 	for _, slc := range records {
 		for _, s := range slc {
 			// TODO - fix this, this is bad and will break if there are any colons inside of a string
@@ -200,6 +219,25 @@ func ParseMap(t string, typ reflect.Type, indent int) (interface{}, error) {
 		}
 	}
 	return m.Interface(), nil
+}
+
+// ValueTypeIsValid returns whether or not the map value type is valid for our purposes
+func ValueTypeIsValid(v reflect.Value, depth int) (valid bool) {
+
+	if depth > 1 {
+		if v.Kind() == reflect.Slice {
+			return false
+		}
+	}
+
+	switch v.Kind() {
+	case reflect.Uintptr, reflect.Chan, reflect.Struct, reflect.Invalid:
+		return false
+	case reflect.Ptr:
+		v = reflect.Indirect(v)
+		return ValueTypeIsValid(v, depth + 1)
+	}
+	return true
 }
 
 // Generate data creates a map of the interface i, and marshals it into the given format (yaml or json)

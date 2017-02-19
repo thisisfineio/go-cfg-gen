@@ -17,7 +17,13 @@ func init() {
 	flag.Parse()
 }
 
+type TestNonEmptyInterface interface {
+	TestFunction() error
+}
+
 type TestConfig struct {
+	Data interface{}
+	TestNonEmptyInterface
 	TestString string
 	TestInt int
 	TestFloat float64
@@ -28,8 +34,10 @@ type TestConfig struct {
 	TestStringSlice []string
 	TestIntSlice []int
 	TestSliceOfStringSlices [][]string
+	TestSliceOfSliceOfSlices [][][]string
 	TestEmbedded TestEmbeddedStruct
 	TestEmbeddedStructPtr *TestEmbeddedStruct
+	TestComplexMapType map[string]*TestEmbeddedStruct
 }
 
 type TestEmbeddedStruct struct {
@@ -48,7 +56,7 @@ func main() {
 		// do something with result (save to file, etc)
 		fmt.Println(string(data))
 		// we're done generating the config, exit
-		os.Exit(-1)
+		os.Exit(0)
 	}
 
 	// do other stuff in your application
