@@ -8,11 +8,6 @@ import (
 	"github.com/thisisfineio/go-cfg-gen"
 )
 
-type Config struct {
-	FileType  string
-	Deployers []string
-}
-
 var (
 	genConfig bool
 )
@@ -22,16 +17,39 @@ func init() {
 	flag.Parse()
 }
 
+type TestConfig struct {
+	TestString string
+	TestInt int
+	TestFloat float64
+	TestBool bool
+	TestMapStringString map[string]string
+	TestMapIntString map[int]string
+	TestMapStringInterface map[string]interface{}
+	TestStringSlice []string
+	TestIntSlice []int
+	TestSliceOfStringSlices [][]string
+	TestEmbedded TestEmbeddedStruct
+	TestEmbeddedStructPtr *TestEmbeddedStruct
+}
+
+type TestEmbeddedStruct struct {
+	EmbeddedString string
+}
+
 func main() {
 	// config flag given
 	if genConfig {
 		// do generation (user GenerateAndSave(interface{}, format, path) to write directly to file)
-		data, err := cfgen.GenerateData(&Config{}, cfgen.Json)
+		data, err := cfgen.GenerateData(TestConfig{}, cfgen.Json)
 		if err != nil {
 			fmt.Println(err)
 			os.Exit(-1)
 		}
 		// do something with result (save to file, etc)
 		fmt.Println(string(data))
+		// we're done generating the config, exit
+		os.Exit(-1)
 	}
+
+	// do other stuff in your application
 }

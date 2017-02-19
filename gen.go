@@ -17,6 +17,7 @@ import (
 
 	"bytes"
 	"encoding/csv"
+	"io"
 )
 
 var (
@@ -33,6 +34,29 @@ const (
 	WordBits = 32 << (^uint(0) >> 63) // 64 or 32
 )
 
+var (
+	// reader is the internal reader that we'll take input on, the default is os.Stdin
+	reader io.Reader
+	// writer is the internal writer we'll write output to, the default is os.Stdout
+	writer io.Writer
+)
+
+func init() {
+	reader = os.Stdin
+	writer = os.Stdout
+}
+
+// SetReader sets the reader that CreateMap will use in order to take in input
+// defaults to os.Stdin
+func SetReader(r io.Reader) {
+	reader = r
+}
+
+// SetWriter sets the writer that CreateMap will use in order to write output to
+func SetWriter(w io.Writer) {
+	writer = w
+}
+
 // CreateMap creates a map of the interface given (which much be a struct)
 func CreateMap(i interface{}, indent int) (map[string]interface{}, error) {
 	m := make(map[string]interface{})
@@ -44,13 +68,12 @@ func CreateMap(i interface{}, indent int) (map[string]interface{}, error) {
 		return nil, ErrNotAStruct
 	}
 	if indent > 0 {
-		fmt.Println("Struct: ", strings.Repeat(" ", indent), v.Type().Name())
-
+		fmt.Fprintln(writer,"Struct: ", strings.Repeat(" ", indent), v.Type().Name())
 	} else {
-		fmt.Println("Struct:", v.Type().Name())
+		fmt.Fprintln(writer,"Struct:", v.Type().Name())
 	}
 	indent++
-	scanner := bufio.NewScanner(os.Stdin)
+	scanner := bufio.NewScanner(reader)
 	for i := 0; i < v.NumField(); i++ {
 		f := v.Field(i)
 		n := v.Type().Field(i).Name
@@ -59,20 +82,20 @@ func CreateMap(i interface{}, indent int) (map[string]interface{}, error) {
 
 		switch f.Kind() {
 		case reflect.Struct:
-			fmt.Printf("%sEmbedded struct: %s (name: %s)\n", strings.Repeat(" ", indent+1), n, v.Type().Name())
+			fmt.Fprintf(writer, "%sEmbedded struct: %s (name: %s)\n", strings.Repeat(" ", indent+1), n, v.Type().Name())
 		case reflect.Ptr:
-			fmt.Printf("%sEmbedded pointer: %s (name: %s)\n", strings.Repeat(" ", indent+1), n, v.Type().Name())
+			fmt.Fprintf(writer, "%sEmbedded pointer: %s (name: %s)\n", strings.Repeat(" ", indent+1), n, v.Type().Name())
 		default:
-			fmt.Printf("%sPlease enter a value for %s (type: %s)", strings.Repeat(" ", indent), n, f.Kind().String())
+			fmt.Fprintf(writer, "%sPlease enter a value for %s (type: %s)", strings.Repeat(" ", indent), n, f.Kind().String())
 			if f.Kind() == reflect.Slice {
-				fmt.Printf("(%s) (enter your values as a comma separated list) ex: '1,2,3', 'I love configs!' - using double quotes will ignore commas inside them, like a csv. For slices of slices, use double quotes around each slice value: ex: \"1,2,3\",\"a,b,c\"", f.Type().Elem())
+				fmt.Fprintf(writer, "(%s) (enter your values as a comma separated list) ex: '1,2,3', 'I love configs!' - using double quotes will ignore commas inside them, like a csv. For slices of slices, use double quotes around each slice value: ex: \"1,2,3\",\"a,b,c\"", f.Type().Elem())
 			}
 
 			if f.Kind() == reflect.Map {
-				fmt.Printf("KeyType: %s, ValueType:%s, (enter your values as a comma separated list of key value pairs separated by a colon) ex: 'first_key:first_value,second_key:secondvalue'", f.Type().Key(), f.Type().Elem())
+				fmt.Fprintf(writer, "KeyType: %s, ValueType:%s, (enter your values as a comma separated list of key value pairs separated by a colon) ex: 'first_key:first_value,second_key:secondvalue'", f.Type().Key(), f.Type().Elem())
 			}
 
-			fmt.Printf("\n%s", strings.Repeat(" ", indent))
+			fmt.Fprintf(writer, "\n%s", strings.Repeat(" ", indent))
 			scanner.Scan()
 			t = scanner.Text()
 		}
