@@ -9,18 +9,8 @@ import (
 )
 
 type Config struct {
-	Value1         string
-	Value2         int
-	Value3         float64
-	SSlice         []string
-	ISlice         []int
-	M              map[string]interface{}
-	EmbeddedStruct EmbeddedStruct
-	EPtr           *EmbeddedStruct
-}
-
-type EmbeddedStruct struct {
-	S string
+	FileType  string
+	Deployers []string
 }
 
 var (
@@ -36,7 +26,7 @@ func main() {
 	// config flag given
 	if genConfig {
 		// do generation (user GenerateAndSave(interface{}, format, path) to write directly to file)
-		data, err := cfgen.GenerateData(&Config{}, cfgen.Yaml)
+		data, err := cfgen.GenerateData(&Config{}, cfgen.Json)
 		if err != nil {
 			fmt.Println(err)
 			os.Exit(-1)

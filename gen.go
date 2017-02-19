@@ -17,8 +17,6 @@ import (
 
 	"bytes"
 	"encoding/csv"
-
-	"github.com/alistanis/size"
 )
 
 var (
@@ -26,12 +24,17 @@ var (
 	ErrInvalidFormat = errors.New("Invalid format given: must be json or yaml")
 )
 
+type Format int
+
 const (
-	Json = "json"
-	Yaml = "yaml"
+	Json Format = iota
+	Yaml
+
+	WordBits = 32 << (^uint(0) >> 63) // 64 or 32
 )
 
-func Create(i interface{}, indent int) (map[string]interface{}, error) {
+// CreateMap creates a map of the interface given (which much be a struct)
+func CreateMap(i interface{}, indent int) (map[string]interface{}, error) {
 	m := make(map[string]interface{})
 	v := reflect.ValueOf(i)
 	if v.Kind() == reflect.Ptr {
@@ -62,7 +65,7 @@ func Create(i interface{}, indent int) (map[string]interface{}, error) {
 		default:
 			fmt.Printf("%sPlease enter a value for %s (type: %s)", strings.Repeat(" ", indent), n, f.Kind().String())
 			if f.Kind() == reflect.Slice {
-				fmt.Print(" (enter your values as a comma separated list) ex: '1,2,3', 'I love configs!' - using double quotes will ignore commas inside them, like a csv.")
+				fmt.Printf("(%s) (enter your values as a comma separated list) ex: '1,2,3', 'I love configs!' - using double quotes will ignore commas inside them, like a csv. For slices of slices, use double quotes around each slice value: ex: \"1,2,3\",\"a,b,c\"", f.Type().Elem())
 			}
 
 			if f.Kind() == reflect.Map {
@@ -94,21 +97,22 @@ func ParseType(t string, typ reflect.Type, indent int) (interface{}, error) {
 		return strconv.Atoi(t)
 	case reflect.Uint, reflect.Uint8, reflect.Uint16,
 		reflect.Uint32, reflect.Uint64:
-		return UAtoi(t)
+		return Uatoi(t)
 	case reflect.Bool:
 		return strconv.ParseBool(t)
 	case reflect.String:
 		return t, nil
 	case reflect.Float32, reflect.Float64:
-		return strconv.ParseFloat(t, size.WordBits)
+		return strconv.ParseFloat(t, WordBits)
 	case reflect.Slice:
 		return ParseSlice(t, typ.Elem(), indent)
 	case reflect.Map:
 		return ParseMap(t, typ, indent)
 	case reflect.Struct:
-		return Create(reflect.New(typ).Interface(), indent+1)
+		return CreateMap(reflect.New(typ).Interface(), indent+1)
 	case reflect.Ptr:
-		return Create(reflect.New(typ.Elem()).Interface(), indent+1)
+		return CreateMap(reflect.New(typ.Elem()).Interface(), indent+1)
+	// just return the string since we don't know what its real type is
 	case reflect.Interface:
 		return t, nil
 	// ignore these types for now
@@ -119,6 +123,7 @@ func ParseType(t string, typ reflect.Type, indent int) (interface{}, error) {
 	}
 }
 
+// ParseSlice parses each value in the string for its type and adds it to a slice of interfaces, returned itself as an interface
 func ParseSlice(t string, typ reflect.Type, indent int) (interface{}, error) {
 	r := bytes.NewReader([]byte(t))
 	csvR := csv.NewReader(r)
@@ -140,6 +145,7 @@ func ParseSlice(t string, typ reflect.Type, indent int) (interface{}, error) {
 	return i, nil
 }
 
+// ParseMap parses a string for key/value pairs, creates a map of the appropriate type, and returns the map as an interface
 func ParseMap(t string, typ reflect.Type, indent int) (interface{}, error) {
 	r := bytes.NewReader([]byte(t))
 	csvR := csv.NewReader(r)
@@ -149,16 +155,15 @@ func ParseMap(t string, typ reflect.Type, indent int) (interface{}, error) {
 	}
 	m := reflect.MakeMap(typ)
 
-	ktyp := typ.Elem()
-	vtyp := typ.Key()
+	ktyp := typ.Key()
+	vtyp := typ.Elem()
 	for _, slc := range records {
 		for _, s := range slc {
-			// TODO - fix this, this is bad
+			// TODO - fix this, this is bad and will break if there are any colons inside of a string
 			kvslc := strings.Split(s, ":")
 			if len(kvslc) != 2 {
 				return nil, fmt.Errorf("cfgen: Missing full k/v pair for map, got %d of 2 entries", len(kvslc))
 			}
-
 			k, err := ParseType(kvslc[0], ktyp, indent)
 			if err != nil {
 				return nil, err
@@ -174,8 +179,9 @@ func ParseMap(t string, typ reflect.Type, indent int) (interface{}, error) {
 	return m.Interface(), nil
 }
 
-func GenerateData(i interface{}, format string) ([]byte, error) {
-	m, err := Create(i, 0)
+// Generate data creates a map of the interface i, and marshals it into the given format (yaml or json)
+func GenerateData(i interface{}, format Format) ([]byte, error) {
+	m, err := CreateMap(i, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +194,8 @@ func GenerateData(i interface{}, format string) ([]byte, error) {
 	return nil, ErrInvalidFormat
 }
 
-func GenerateAndSave(i interface{}, format, path string) error {
+// GenerateAndSave generates config data in the given format and saves it to the path given
+func GenerateAndSave(i interface{}, format Format, path string) error {
 	data, err := GenerateData(i, format)
 	if err != nil {
 		return err
@@ -196,18 +203,8 @@ func GenerateAndSave(i interface{}, format, path string) error {
 	return ioutil.WriteFile(path, data, 0644)
 }
 
-type Example struct {
-	Value1 string
-	Value2 bool
-	Value3 Embed
-	Value4 *Embed
-}
-
-type Embed struct {
-	String string
-}
-
-func UAtoi(s string) (uint, error) {
+// Uatoi converts a string to a uint
+func Uatoi(s string) (uint, error) {
 	ui64, err := strconv.ParseUint(s, 10, 0)
 	return uint(ui64), err
 }
